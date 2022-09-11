@@ -22,6 +22,7 @@ Necessary settings should be made appropriately as in the picture.
 The Start and Interrupt pins are not obligatory, but are set to 3000 sample rate by default and will continue to capture indefinitely until this limit is reached. To terminate this earlier, it can be terminated with the Interrupt pin connection. So it might be helpful to at least use a button for Interrupt.
 
 Although pin names do not work functionally, they are only used for naming in the web interface and for the saved file format.
+
 ![Settings](images/2.png)
 
 ## Notes
@@ -29,6 +30,7 @@ Although pin names do not work functionally, they are only used for naming in th
 - Even if the socket connection in the web interface is lost, it will automatically connect and continue to download signals after signal capture. Therefore, the web page should not be refreshed during capture.
 - Be sure to enter the correct sample rate (1.000.000hz) when importing so that you can decode the signals correctly in PulseView.
 - You can download PulseView software from [here](https://sigrok.org/wiki/Downloads) to view the captured signals.
+  
 
 ![PulseView](images/3.png)
 
