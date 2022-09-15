@@ -1,72 +1,146 @@
 /*
  * License: GNU GPL v3
  *
- * Author : yoursunny
- * Created: 2019-01-06
+ * Author: Mustafa Kuru
+ * Created: 2022-09-11
  *
- * Author : Mustafa KURU
- * Updated: 2022-09-11
+ * Description: Web Logic Analyzer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * This program is based on the work of yoursunny (2019-01-06)
+ *
  */
-
-#include <c_types.h>
-#include <ESP8266WiFi.h>
-#include <ESPAsyncTCP.h>
-#include <ESPAsyncWebServer.h>
 
 #define BAUDRATE 115200
 
 #define WIFI_NAME "xxxxxxxx"
 #define WIFI_PASS "xxxxxxxxxxxxxxxxxxx"
+#define STATUS_LED LED_BUILTIN
+
+static const int MAX_SAMPLE = 3000;
+
+#ifdef ESP32 //       ========================= ESP 32 =========================
+
+#define PIN_START_NAME "GPIO22"
+#define PIN_INTERRUPT_NAME "GPIO5"
+#define PIN0_NAME "GPIO19"
+#define PIN1_NAME "GPIO18"
+#define PIN2_NAME "GPIO17"
+#define PIN3_NAME "GPIO16"
+
+static const int PIN_START = 22;
+static const int PIN_INTERRUPT = 5;
+static const int PIN0 = 19;
+static const int PIN1 = 18;
+static const int PIN2 = 17;
+static const int PIN3 = 16;
+
+#include "soc/rtc_wdt.h"
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#define RAW_READ() REG_READ(GPIO_IN_REG)
+
+#define WTD_ENABLE(_)     \
+  {                       \
+    rtc_wdt_protect_on(); \
+    rtc_wdt_enable();     \
+  }
+
+#define WTD_DISABLE(_)     \
+  {                        \
+    rtc_wdt_protect_off(); \
+    rtc_wdt_disable();     \
+  }
+#define WTD_FEED(_) \
+  {                 \
+    rtc_wdt_feed(); \
+  }
+
+static_assert(PIN_START >= 0 && PIN_START < 29 && PIN0 != 20 && PIN0 != 24 && PIN0 != 28 && PIN0 != 29, "");
+static_assert(PIN_INTERRUPT >= 0 && PIN_INTERRUPT <= 39, "");
+static_assert(PIN0 >= 0 && PIN0 < 29 && PIN0 != 20 && PIN0 != 24 && PIN0 != 28 && PIN0 != 29, "");
+static_assert(PIN1 >= 0 && PIN1 < 29 && PIN0 != 20 && PIN0 != 24 && PIN0 != 28 && PIN0 != 29, "");
+static_assert(PIN2 >= 0 && PIN2 < 29 && PIN0 != 20 && PIN0 != 24 && PIN0 != 28 && PIN0 != 29, "");
+static_assert(PIN3 >= 0 && PIN3 < 29 && PIN0 != 20 && PIN0 != 24 && PIN0 != 28 && PIN0 != 29, "");
+#define L_LOW LOW
+#define L_HIGH HIGH
+#elif defined(ESP8266) // ==================== ESP 8266 ========================
 
 #define PIN_START_NAME "D2"
 #define PIN_INTERRUPT_NAME "D3"
 #define PIN0_NAME "D5"
 #define PIN1_NAME "D6"
 #define PIN2_NAME "D7"
-#define PIN3_NAME "D8"
+#define PIN3_NAME "S3"
 
-static const int PIN_START = 4;
+static const int PIN_START = 15;
 static const int PIN_INTERRUPT = 0;
 static const int PIN0 = 14;
 static const int PIN1 = 12;
 static const int PIN2 = 13;
-static const int PIN3 = 15;
+static const int PIN3 = 9;
 
-static const int MAX_SAMPLE = 3000;
+#include <ESP8266WiFi.h>
+#include <ESPAsyncTCP.h>
+#define RAW_READ() (GPI)
 
-// unused pins should be tied to the ground
+#define WTD_ENABLE(_)                          \
+  {                                            \
+    ESP.wdtEnable(WDTO_8S);                    \
+    /* Hardware WDT ON */                      \
+    (*((volatile uint32_t *)0x60000900) |= 1); \
+  }
+#define WTD_DISABLE(_)                            \
+  {                                               \
+    ESP.wdtDisable();                             \
+    /* Hardware WDT OFF*/                         \
+    (*((volatile uint32_t *)0x60000900) &= ~(1)); \
+  }
+#define WTD_FEED(_) \
+  {                 \
+    ESP.wdtFeed();  \
+  }
+
 static_assert(PIN_START >= 0 && PIN_START < 16, "");
 static_assert(PIN_INTERRUPT >= 0 && PIN_INTERRUPT < 16, "");
 static_assert(PIN0 >= 0 && PIN0 < 16, "");
 static_assert(PIN1 >= 0 && PIN1 < 16, "");
 static_assert(PIN2 >= 0 && PIN2 < 16, "");
 static_assert(PIN3 >= 0 && PIN3 < 16, "");
+#define L_LOW HIGH
+#define L_HIGH LOW
+#endif
+#include <ESPAsyncWebServer.h>
+
+// unused pins should be tied to the ground
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
-volatile bool stopListen = false;
-volatile bool start = false;
-volatile bool startRemote = false;
-unsigned long times[MAX_SAMPLE]; // when did change happen
-uint32_t values[MAX_SAMPLE];     // GPI value at time
+static volatile bool stopListen = false;
+static volatile bool start = false;
+static volatile bool startRemote = false;
+static unsigned long times[MAX_SAMPLE]; // when did change happen
+static uint32_t values[MAX_SAMPLE];     // GPI value at time
 static constexpr uint32_t MASK = (1 << PIN0) | (1 << PIN1) | (1 << PIN2) | (1 << PIN3);
-
-ICACHE_RAM_ATTR int collect_i_temp;
-ICACHE_RAM_ATTR void stopListening()
+static int collect_i_temp;
+IRAM_ATTR void stopListening()
 {
   stopListen = true;
 }
 
-void hw_wdt_disable()
-{
-  *((volatile uint32_t *)0x60000900) &= ~(1); // Hardware WDT OFF
-}
-
-void hw_wdt_enable()
-{
-  *((volatile uint32_t *)0x60000900) |= 1; // Hardware WDT ON
-}
 const char index_html[] PROGMEM = R"=="==(
 <!DOCTYPE html>
 <html lang="en">
@@ -259,7 +333,7 @@ const char index_html[] PROGMEM = R"=="==(
               borderColor: "purple",
               backgroundColor: "purple",
               stepped: true,
-              yAxisID: "y",
+              yAxisID: "y2",
             },
             {
               label: "PIN 4",
@@ -267,7 +341,7 @@ const char index_html[] PROGMEM = R"=="==(
               borderColor: "green",
               backgroundColor: "green",
               stepped: true,
-              yAxisID: "y2",
+              yAxisID: "y",
             },
           ],
         },
@@ -320,7 +394,7 @@ const char index_html[] PROGMEM = R"=="==(
               stack: "demo",
               stackWeight: 1,
               grid: {
-                borderColor: "purple",
+                borderColor: "green",
               },
             },
             y2: {
@@ -331,7 +405,7 @@ const char index_html[] PROGMEM = R"=="==(
               stack: "demo",
               stackWeight: 1,
               grid: {
-                borderColor: "green",
+                borderColor: "purple",
               },
             },
             y3: {
@@ -516,13 +590,11 @@ void initWebSocket()
   server.addHandler(&ws);
 }
 
-extern void ICACHE_RAM_ATTR collect()
+extern void IRAM_ATTR collect()
 {
-  hw_wdt_disable();
-  attachInterrupt(digitalPinToInterrupt(PIN_INTERRUPT), stopListening, RISING);
-  micros();
+  attachInterrupt(digitalPinToInterrupt(PIN_INTERRUPT), stopListening, CHANGE);
   times[0] = micros();
-  values[0] = GPI & MASK;
+  values[0] = RAW_READ() & MASK;
   stopListen = false;
   collect_i_temp = MAX_SAMPLE;
   for (int i = 1; i < MAX_SAMPLE; ++i)
@@ -530,17 +602,16 @@ extern void ICACHE_RAM_ATTR collect()
     uint32_t value;
     do
     {
-      value = GPI & MASK;
+      value = RAW_READ() & MASK;
     } while (value == values[i - 1] && !stopListen);
     times[i] = micros();
     values[i] = value;
     if (stopListen)
     {
-      collect_i_temp = i;
+      collect_i_temp = i + 1;
       break;
     }
   }
-  hw_wdt_enable();
   detachInterrupt(digitalPinToInterrupt(PIN_INTERRUPT));
 }
 
@@ -574,18 +645,18 @@ void report()
   bool isNeedWaitForWsReconnect = elapsedTimeDueCapture > 10 * 1000 * 1000;
   if (isNeedWaitForWsReconnect)
   {
-    digitalWrite(LED_BUILTIN, LOW);
+    digitalWrite(STATUS_LED, L_HIGH);
     ws.closeAll();
     for (int i = 0; i < 50; i++)
     {
       ws.cleanupClients();
       if (i % 5 == 0)
       {
-        digitalWrite(LED_BUILTIN, HIGH);
+        digitalWrite(STATUS_LED, L_LOW);
       }
       else if ((i - 1) % 5 == 0)
       {
-        digitalWrite(LED_BUILTIN, LOW);
+        digitalWrite(STATUS_LED, L_HIGH);
       }
       delay(100);
     }
@@ -619,11 +690,11 @@ void report()
 
     while (!ws.availableForWriteAll())
     {
-      ESP.wdtFeed();
+      WTD_FEED();
       delay(1);
     }
     wsMsg += msg;
-    if (chunk > 30)
+    if (chunk > 30 || (chunk > 0 && i == collect_i_temp - 1))
     {
       ws.textAll(wsMsg);
       Serial.println(wsMsg);
@@ -640,9 +711,9 @@ void report()
   }
   for (int i = 0; i < 3; i++)
   {
-    digitalWrite(LED_BUILTIN, LOW);
+    digitalWrite(STATUS_LED, L_HIGH);
     delay(100);
-    digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(STATUS_LED, L_LOW);
     delay(200);
   }
   Serial.println("F");
@@ -651,9 +722,13 @@ void report()
 
 void setup()
 {
+#ifdef ESP32
+  setCpuFrequencyMhz(240);
+#endif
   Serial.begin(BAUDRATE);
+  delay(1500);
 
-  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(STATUS_LED, OUTPUT);
   pinMode(PIN_START, INPUT);
   pinMode(PIN0, INPUT_PULLUP);
   pinMode(PIN1, INPUT_PULLUP);
@@ -662,9 +737,9 @@ void setup()
 
   for (int i = 0; i < 2; i++)
   {
-    digitalWrite(LED_BUILTIN, LOW);
+    digitalWrite(STATUS_LED, L_HIGH);
     delay(300);
-    digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(STATUS_LED, L_LOW);
     delay(300);
   }
 
@@ -680,9 +755,9 @@ void setup()
 
   for (int i = 0; i < 2; i++)
   {
-    digitalWrite(LED_BUILTIN, LOW);
+    digitalWrite(STATUS_LED, L_HIGH);
     delay(100);
-    digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(STATUS_LED, L_LOW);
     delay(100);
   }
 
@@ -699,16 +774,17 @@ void loop()
   while (!start && !startRemote)
   {
     ws.cleanupClients();
-    start = !digitalRead(PIN_START);
+    start = digitalRead(PIN_START);
     delay(1);
   }
+  Serial.printf("Logic analyzer started. Button start: %d, Web Start: %d\n", start, startRemote);
   start = false;
   startRemote = false;
 
-  digitalWrite(LED_BUILTIN, LOW);
-  ESP.wdtDisable();
+  digitalWrite(STATUS_LED, L_HIGH);
+  WTD_DISABLE();
   collect();
-  ESP.wdtEnable(WDTO_8S);
-  digitalWrite(LED_BUILTIN, HIGH);
+  WTD_ENABLE();
+  digitalWrite(STATUS_LED, L_LOW);
   report();
 }

@@ -8,7 +8,7 @@ PulseView supported file formats can be downloaded via the web interface.
 
 The automatic download feature in the web interface, the signal capture feature is started with the button, and when the signal is captured without being at the computer, the signals captured by the browser are automatically downloaded in the selected format.
 
-I developed the project for the ESP8266 NodeMCU V3 I have and just tested it with it. I cannot guarantee its functionality for other variants.
+I developed the project for the ESP8266 NodeMCU V3 and DOIT ESP32 DEVKIT v1 I have and just tested it with it. I cannot guarantee its functionality for other variants.
 
 For more advanced signal capture and analysis needs, I coded a web-based version inspired by the aster94 project [here](https://github.com/aster94/logic-analyzer).
 
@@ -26,7 +26,9 @@ Although pin names do not work functionally, they are only used for naming in th
 ![Settings](images/2.png)
 
 ## Notes
+- Depending on whether it is ESP8266 or ESP32, you need to set different pins from the relevant place.
 - The hardware watchdog is disabled during capture in order to capture long-term obscure signals.
+- Set the MCU frequency to the highest available.
 - Even if the socket connection in the web interface is lost, it will automatically connect and continue to download signals after signal capture. Therefore, the web page should not be refreshed during capture.
 - Be sure to enter the correct sample rate (1.000.000hz) when importing so that you can decode the signals correctly in PulseView.
 - You can download PulseView software from [here](https://sigrok.org/wiki/Downloads) to view the captured signals.
@@ -36,6 +38,12 @@ Although pin names do not work functionally, they are only used for naming in th
 
 ## Change Log
 
+
+### 1.0.1
+
+- Fixed the issue where signal chunks could not be sent when the buffer limit could not be reached.
+- Updated to work on ESP32 and ESP8266 as well
+- The signal sequence in the web interface has been changed to the right order.
 ### 1.0.0
 
 - Initial release
