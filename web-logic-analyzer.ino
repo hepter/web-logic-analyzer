@@ -603,6 +603,7 @@ extern void IRAM_ATTR collect()
     do
     {
       value = RAW_READ() & MASK;
+      yield();
     } while (value == values[i - 1] && !stopListen);
     times[i] = micros();
     values[i] = value;
